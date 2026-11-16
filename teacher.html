@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>作业批改台</title>
+<link rel="stylesheet" href="style.css?v=3">
+<style>
+  .wrap { max-width: 1000px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+  .controls label { display: flex; flex-direction: column; font-size: 13px; color: var(--ink-2); gap: 4px; }
+  .controls select, .controls input { border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--card); min-width: 180px; font-size: 15px; color: var(--ink); }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 16px 0; }
+  .summary .card { margin: 0; padding: 14px 16px; }
+  .summary b { display: block; font-size: 28px; line-height: 1.2; }
+  .summary span { font-size: 13px; color: var(--ink-2); }
+  .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-top: 8px; }
+  .tabs button { border: 0; background: none; padding: 10px 14px; font-size: 16px; color: var(--ink-2); border-bottom: 3px solid transparent; }
+  .tabs button[aria-selected="true"] { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .srow { display: grid; grid-template-columns: minmax(110px, 1.4fr) 1fr 2fr auto; gap: 12px; align-items: center; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-top: 10px; }
+  .srow.open { border-color: var(--accent); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .srow .nm { font-weight: 600; font-size: 17px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .meter { height: 8px; background: var(--wrong-soft); border-radius: 99px; overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--right); }
+  .detail { border: 1px solid var(--accent); border-top: 0; border-radius: 0 0 12px 12px; background: var(--card); padding: 6px 14px 14px; }
+  .dtools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 8px 0; }
+  .urow { border-top: 1px dashed var(--line); padding: 12px 0; display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; }
+  .urow .lbl { font-size: 13px; color: var(--ink-2); }
+  .urow .qq { font-family: var(--cn); font-size: 18px; white-space: pre-wrap; line-height: 1.8; }
+  .urow .qq img { width: 90px; border-radius: 8px; vertical-align: middle; margin-right: 8px; }
+  .hl { background: var(--accent-soft); color: var(--accent); padding: 0 4px; border-radius: 4px; font-weight: 600; }
+  .ans { margin-top: 4px; font-size: 15px; }
+  .ans .s { font-family: var(--cn); font-size: 17px; }
+  .ans .k { color: var(--right); font-family: var(--cn); font-size: 17px; }
+  .acts { display: flex; gap: 6px; align-items: start; flex-wrap: wrap; justify-content: flex-end; }
+  .btn.ok { background: var(--right); }
+  .btn.no { background: var(--wrong); }
+  .qcard { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 10px; }
+  .qhead { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .who { font-size: 14px; color: var(--ink-2); margin-top: 6px; }
+  .who b { color: var(--ink); font-weight: 600; }
+  .prow { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px dashed var(--line); }
+  .empty { text-align: center; padding: 30px; color: var(--ink-2); }
+  @media (max-width: 640px) {
+    .srow { grid-template-columns: 1fr auto; }
+    .srow .tm, .srow .meter { display: none; }
+    .urow { grid-template-columns: 1fr; }
+    .acts { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="klass" id="klass"></div>
+    <h1>作业批改台</h1>
+    <div class="demo-banner hidden" id="demo">演示模式：显示的是这台设备上的试用提交，没有连接 Google 表格。</div>
+  </header>
+
+  <div class="controls">
+    <label>作业<select id="lesson"></select></label>
+    <label>班级口令<input id="code" autocomplete="off"></label>
+    <label id="keybox">老师密码<input id="key" type="password" autocomplete="current-password"></label>
+    <button class="btn small" id="load">读取提交</button>
+  </div>
+
+  <div id="msg"></div>
+  <div id="main" class="hidden">
+    <div class="summary" id="summary"></div>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="students">按学生看</button>
+      <button role="tab" aria-selected="false" data-tab="questions">按题目看</button>
+    </div>
+    <div id="view"></div>
+  </div>
+  <div class="footer-space"></div>
+</div>
+
+<script src="config.js?v=3"></script>
+<script src="common.js?v=3"></script>
+<script>
+(function () {
+  const { C, DEMO, esc, loadLesson, getCode, setCode, gradeAll, answerText, call, store, fmtTime } = HW;
+  const $ = (id) => document.getElementById(id);
+  let lesson, key, subs = [], marks = [], tab = "students", openStudent = null, onlyBad = true;
+
+  $("klass").textContent = C.CLASS_NAME || "";
+  if (DEMO) { $("demo").classList.remove("hidden"); $("keybox").classList.add("hidden"); }
+  $("key").value = store("hw_teacher_key") || "";
+  $("code").value = getCode();
+  $("lesson").innerHTML = (C.LESSONS || []).map((l) => `<option value="${esc(l.id)}">${esc(l.title)}</option>`).join("");
+  const last = store("hw_teacher_lesson");
+  if (last && (C.LESSONS || []).some((l) => l.id === last)) $("lesson").value = last;
+
+  $("load").addEventListener("click", load);
+  $("key").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+  document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+    tab = b.dataset.tab;
+    document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", x === b));
+    draw();
+  }));
+  $("code").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+  if ($("code").value && (DEMO || $("key").value)) load();
+
+  async function load() {
+    const id = $("lesson").value;
+    if (!id) return;
+    store("hw_teacher_lesson", id);
+    if (!DEMO) store("hw_teacher_key", $("key").value);
+    $("msg").innerHTML = '<p class="muted">正在读取…</p>';
+    try {
+      const r = await loadLesson(id, $("code").value);
+      setCode($("code").value);
+      lesson = r.lesson; key = r.key;
+      const res = await call({ action: "list", lesson: id, key: $("key").value });
+      if (!res.ok) throw new Error(res.error || "读取失败");
+      subs = res.subs || []; marks = res.marks || [];
+      $("msg").innerHTML = "";
+      $("main").classList.remove("hidden");
+      draw();
+    } catch (e) {
+      $("msg").innerHTML = `<div class="card">没有读取成功：${esc(e.message)}</div>`;
+    }
+  }
+
+  // ---------- 计算 ----------
+  function markMap() {
+    const m = {};
+    for (const k of marks) {
+      const kk = k.id + "|" + k.unit;
+      if (k.result === "clear") delete m[kk]; else m[kk] = k.result;
+    }
+    return m;
+  }
+  function students() {
+    const by = {};
+    [...subs].sort((a, b) => new Date(a.time) - new Date(b.time)).forEach((s) => {
+      const n = String(s.student).trim();
+      (by[n] = by[n] || []).push(s);
+    });
+    const mm = markMap();
+    return Object.entries(by).map(([name, list]) => {
+      const s = list[0]; // 以第一次提交为准
+      const g = gradeAll(lesson, key, s.answers || {});
+      const status = {}, count = { right: 0, wrong: 0, pending: 0 };
+      for (const u of lesson.units) {
+        const m = mm[s.id + "|" + u.id];
+        status[u.id] = { st: m || g.res[u.id].status, auto: g.res[u.id].status, reason: g.res[u.id].reason, marked: !!m };
+        count[status[u.id].st]++;
+      }
+      return { name, sub: s, tries: list.length, status, count };
+    }).sort((a, b) => a.name.localeCompare(b.name, "zh"));
+  }
+
+  // ---------- 显示工具 ----------
+  const sec = (u) => lesson.blocks[u.sec];
+  const item = (u) => sec(u).items[u.item];
+  function showVal(u, v) {
+    if (!v) return '<span class="muted">（没写）</span>';
+    const opts = sec(u).bank || item(u).options;
+    if (opts && (u.type === "select" || u.type === "choice")) {
+      const o = opts.find((x) => x[0] === v);
+      return esc(o || v);
+    }
+    return esc(v);
+  }
+  function qHtml(u, v) {
+    const it = item(u);
+    if (it.img && u.type === "select") return `<img src="${esc(it.img)}" alt="">看图选词`;
+    if (u.type === "choice") return esc(it.text) + `<div class="muted" style="font-size:15px">${it.options.map(esc).join("　")}</div>`;
+    if (u.type === "open") return esc(it.text);
+    const parts = it.text.split("___");
+    let h = (it.img ? `<img src="${esc(it.img)}" alt="">` : "") + esc(parts[0]);
+    for (let i = 1; i < parts.length; i++) {
+      h += (i - 1 === u.blank ? `<span class="hl">${v ? esc(v) : "＿＿"}</span>` : "＿＿") + esc(parts[i]);
+    }
+    return h;
+  }
+  const chip = (st, text) => `<span class="mark ${st}">${text}</span>`;
+  const stLabel = { right: "✓ 对", wrong: "✗ 错", pending: "待批改" };
+  function markButtons(sid, uid, s) {
+    return `<button class="btn small ok" data-mark="right" data-sid="${sid}" data-uid="${uid}">判对</button>
+      <button class="btn small no" data-mark="wrong" data-sid="${sid}" data-uid="${uid}">判错</button>
+      ${s.marked ? `<button class="btn small ghost" data-mark="clear" data-sid="${sid}" data-uid="${uid}">撤销</button>` : ""}`;
+  }
+
+  // ---------- 画页面 ----------
+  function draw() {
+    const st = students();
+    let r = 0, w = 0, p = 0;
+    st.forEach((s) => { r += s.count.right; w += s.count.wrong; p += s.count.pending; });
+    const roster = C.STUDENTS || [];
+    const missing = roster.filter((n) => !st.some((s) => s.name === n));
+    $("summary").innerHTML = `
+      <div class="card"><b>${st.length}${roster.length ? " / " + roster.length : ""}</b><span>已交作业人数</span></div>
+      <div class="card"><b>${r + w ? Math.round(100 * r / (r + w)) : 0}%</b><span>全班正确率（已判定的题）</span></div>
+      <div class="card"><b style="color:var(--pend)">${p}</b><span>等你批改的答案</span></div>
+      ${roster.length ? `<div class="card"><b style="font-size:16px">${missing.length ? missing.map(esc).join("、") : "全部交齐"}</b><span>还没交</span></div>` : ""}`;
+    if (!st.length) { $("view").innerHTML = '<div class="empty">还没有学生提交这份作业。</div>'; return; }
+    if (tab === "students") drawStudents(st); else drawQuestions(st);
+  }
+
+  function drawStudents(st) {
+    $("view").innerHTML = st.map((s) => {
+      const dec = s.count.right + s.count.wrong;
+      const pct = dec ? Math.round(100 * s.count.right / dec) : 0;
+      const open = openStudent === s.name;
+      return `<button class="srow${open ? " open" : ""}" data-open="${esc(s.name)}" aria-expanded="${open}">
+          <span class="nm">${esc(s.name)}</span>
+          <span class="tm muted">${fmtTime(s.sub.time)}${s.tries > 1 ? `（交了${s.tries}次，按第一次）` : ""}</span>
+          <span class="meter" title="正确率 ${pct}%"><i style="width:${pct}%"></i></span>
+          <span class="chips">${chip("right", "对 " + s.count.right)}${chip("wrong", "错 " + s.count.wrong)}${s.count.pending ? chip("pending", "待批 " + s.count.pending) : ""}</span>
+        </button>${open ? detail(s) : ""}`;
+    }).join("");
+  }
+
+  function detail(s) {
+    const rows = lesson.units.filter((u) => !onlyBad || s.status[u.id].st !== "right").map((u) => {
+      const x = s.status[u.id], v = (s.sub.answers || {})[u.id];
+      return `<div class="urow">
+        <div>
+          <div class="lbl">${esc(u.label)} ${chip(x.st, stLabel[x.st])}${x.marked ? ' <span class="muted" style="font-size:12px">老师已改判</span>' : ""}${x.reason && !x.marked ? ` <span class="muted" style="font-size:12px">${esc(x.reason)}</span>` : ""}</div>
+          <div class="qq">${qHtml(u, v)}</div>
+          <div class="ans">学生：<span class="s">${showVal(u, v)}</span>　${u.type === "open" || !key[u.id].answer && !(key[u.id].accept || []).length ? "参考" : "正确"}：<span class="k">${esc(answerText(key[u.id]))}</span></div>
+        </div>
+        <div class="acts">${markButtons(s.sub.id, u.id, x)}</div>
+      </div>`;
+    }).join("");
+    return `<div class="detail">
+      <div class="dtools">
+        <label><input type="checkbox" id="onlybad" ${onlyBad ? "checked" : ""}> 只看错题和待批改</label>
+        <button class="btn small ghost" data-copy="${esc(s.name)}">复制这个学生的错题清单</button>
+      </div>
+      ${rows || '<div class="empty">全部做对了 🎉</div>'}
+    </div>`;
+  }
+
+  function drawQuestions(st) {
+    const rows = lesson.units.map((u) => {
+      const wrong = st.filter((s) => s.status[u.id].st === "wrong");
+      const pend = st.filter((s) => s.status[u.id].st === "pending");
+      return { u, wrong, pend };
+    }).filter((x) => x.wrong.length || x.pend.length)
+      .sort((a, b) => b.wrong.length - a.wrong.length || b.pend.length - a.pend.length);
+    if (!rows.length) { $("view").innerHTML = '<div class="empty">没有错题，也没有待批改的答案。</div>'; return; }
+    $("view").innerHTML = '<p class="note">按错的人数从多到少排列。待批改的答案可以在这里逐题集中批改。</p>' + rows.map(({ u, wrong, pend }) => {
+      const groups = {};
+      wrong.forEach((s) => {
+        const v = (s.sub.answers || {})[u.id] || "";
+        (groups[v] = groups[v] || []).push(s.name);
+      });
+      const wrongList = Object.entries(groups).sort((a, b) => b[1].length - a[1].length)
+        .map(([v, names]) => `<div class="who"><b>${showVal(u, v)}</b> × ${names.length}：${names.map(esc).join("、")}</div>`).join("");
+      const pendList = pend.map((s) => `<div class="prow"><div><span class="muted">${esc(s.name)}：</span><span class="s" style="font-family:var(--cn);font-size:17px">${showVal(u, (s.sub.answers || {})[u.id])}</span></div>
+          <div class="acts">${markButtons(s.sub.id, u.id, s.status[u.id])}</div></div>`).join("");
+      return `<div class="qcard">
+        <div class="qhead"><span class="lbl muted">${esc(u.label)}</span>
+          <span class="chips">${wrong.length ? chip("wrong", `错 ${wrong.length} 人`) : ""}${pend.length ? chip("pending", `待批 ${pend.length}`) : ""}</span></div>
+        <div class="qq" style="font-family:var(--cn);font-size:18px;white-space:pre-wrap">${qHtml(u, "")}</div>
+        <div class="ans">正确/参考：<span class="k" style="color:var(--right);font-family:var(--cn)">${esc(answerText(key[u.id]))}</span></div>
+        ${wrongList}${pendList}
+      </div>`;
+    }).join("");
+  }
+
+  // ---------- 交互 ----------
+  $("view").addEventListener("click", async (e) => {
+    const openBtn = e.target.closest("[data-open]");
+    if (openBtn) { openStudent = openStudent === openBtn.dataset.open ? null : openBtn.dataset.open; draw(); return; }
+    const copyBtn = e.target.closest("[data-copy]");
+    if (copyBtn) { copyList(copyBtn.dataset.copy); return; }
+    const mb = e.target.closest("[data-mark]");
+    if (mb) {
+      mb.disabled = true;
+      try {
+        const body = { action: "mark", key: $("key").value, id: mb.dataset.sid, unit: mb.dataset.uid, result: mb.dataset.mark };
+        const r = await call(body);
+        if (!r.ok) throw new Error(r.error || "保存失败");
+        marks.push({ id: body.id, unit: body.unit, result: body.result, time: new Date().toISOString() });
+        const y = window.scrollY;
+        draw();
+        window.scrollTo(0, y);
+      } catch (err) {
+        alert("没有保存成功：" + err.message);
+        mb.disabled = false;
+      }
+    }
+  });
+  $("view").addEventListener("change", (e) => {
+    if (e.target.id === "onlybad") { onlyBad = e.target.checked; draw(); }
+  });
+
+  function copyList(name) {
+    const s = students().find((x) => x.name === name);
+    if (!s) return;
+    const plain = (h) => { const d = document.createElement("div"); d.innerHTML = h; return d.textContent; };
+    const bad = lesson.units.filter((u) => s.status[u.id].st !== "right");
+    const lines = [`${name} · ${lesson.title}`, `对 ${s.count.right}，错 ${s.count.wrong}，待批改 ${s.count.pending}`, ""];
+    bad.forEach((u, i) => {
+      const v = (s.sub.answers || {})[u.id];
+      lines.push(`${i + 1}. [${u.label}] ${plain(qHtml(u, v)).replace(/\n/g, " ")}`);
+      lines.push(`   你的答案：${plain(showVal(u, v))}　答案：${answerText(key[u.id])}${s.status[u.id].st === "pending" ? "（待批改）" : ""}`);
+    });
+    const text = lines.join("\n");
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+      .then(() => alert("已复制，可以直接粘贴发给学生。"))
+      .catch(() => prompt("复制下面的内容：", text));
+  }
+})();
+</script>
+</body>
+</html>

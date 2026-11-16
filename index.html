@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>汉语作业</title>
+<link rel="stylesheet" href="style.css?v=3">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="klass" id="klass"></div>
+    <div class="demo-banner hidden" id="demo">演示模式：还没有连接 Google 表格，答案只保存在这台设备上。</div>
+  </header>
+</div>
+
+<div class="progress hidden" id="progress">
+  <div class="wrap">
+    <div class="row"><span id="who"></span><span id="pcount"></span></div>
+    <div class="bar"><i id="pbar"></i></div>
+  </div>
+</div>
+
+<main class="wrap">
+  <div id="msg"></div>
+
+  <section class="card hidden" id="gate">
+    <label class="field">
+      <div><b>班级口令</b> <span class="vi">Mã lớp</span></div>
+      <input id="code" autocomplete="off" autocapitalize="characters" placeholder="老师发给你的口令 · Mã lớp giáo viên gửi">
+    </label>
+    <div id="gateerr" class="note" style="color:var(--wrong)"></div>
+    <button class="btn" id="enter">进入 · Vào</button>
+  </section>
+
+  <div id="hero"></div>
+  <section class="card result hidden" id="result"></section>
+
+  <section class="card hidden" id="namecard">
+    <label class="field">
+      <div><b>你的名字</b> <span class="vi">Tên của bạn</span></div>
+      <div id="namebox"></div>
+    </label>
+    <div class="note">写完所有题目后，点最下面的“交作业”。中途关掉网页，已写的答案会自动保存在这台设备上。<br>
+      <span class="vi">Làm xong tất cả các câu thì bấm “交作业 / Nộp bài” ở cuối trang. Nếu đóng trang giữa chừng, câu trả lời vẫn được lưu trên thiết bị này.</span></div>
+  </section>
+
+  <div id="paper"></div>
+
+  <div id="submitbox" class="hidden" style="text-align:center;margin:28px 0">
+    <button class="btn" id="submit">交作业 · Nộp bài</button>
+  </div>
+  <div class="footer-space"></div>
+</main>
+
+<script src="config.js?v=3"></script>
+<script src="common.js?v=3"></script>
+<script>
+(function () {
+  const { C, DEMO, esc, loadLesson, getCode, setCode, gradeAll, answerText, call, store } = HW;
+  const $ = (id) => document.getElementById(id);
+  let lesson, key, units, done = null;
+
+  $("klass").textContent = C.CLASS_NAME || "";
+  if (DEMO) $("demo").classList.remove("hidden");
+
+  const params = new URLSearchParams(location.search);
+  let lessonId = params.get("lesson");
+  const list = C.LESSONS || [];
+  if (!lessonId && list.length === 1) lessonId = list[0].id;
+  if (!lessonId) {
+    $("paper").innerHTML = '<section class="card"><h2>选择作业</h2>' + list.map((l) =>
+      `<p><a href="?lesson=${encodeURIComponent(l.id)}">${esc(l.title)}</a></p>`).join("") + "</section>";
+    return;
+  }
+
+  // ---------- 班级口令 ----------
+  function showGate(err) {
+    $("gate").classList.remove("hidden");
+    $("gateerr").textContent = err || "";
+    $("code").focus();
+  }
+  $("enter").addEventListener("click", () => start($("code").value));
+  $("code").addEventListener("keydown", (e) => { if (e.key === "Enter") start($("code").value); });
+
+  function start(code, fromSaved) {
+    if (!String(code || "").trim()) return showGate("");
+    $("enter").disabled = true;
+    loadLesson(lessonId, code).then((r) => {
+      setCode(code);
+      $("gate").classList.add("hidden");
+      lesson = r.lesson; key = r.key; units = lesson.units;
+      document.title = lesson.title + " · 作业";
+      render();
+      done = store("hw_done_" + lesson.id);
+      if (done) { fill(done.answers); showResult(done); }
+      else {
+        const draft = store("hw_draft_" + lesson.id) || {};
+        buildName(draft.student || "");
+        fill(draft.answers || {});
+        $("namecard").classList.remove("hidden");
+        $("submitbox").classList.remove("hidden");
+        $("progress").classList.remove("hidden");
+        updateProgress();
+      }
+    }).catch((e) => {
+      if (e.badCode) { setCode(null); showGate(fromSaved ? "" : e.message); }
+      else $("msg").innerHTML = `<section class="card">出错了：${esc(e.message)}</section>`;
+    }).finally(() => { $("enter").disabled = false; });
+  }
+  const saved = getCode();
+  if (saved) start(saved, true); else showGate("");
+
+  // ---------- 画页面 ----------
+  const PIN = '<svg width="16" height="20" viewBox="0 0 16 20" aria-hidden="true"><path d="M8 0a8 8 0 0 0-8 8c0 6 8 12 8 12s8-6 8-12a8 8 0 0 0-8-8z" fill="var(--accent)"/><circle cx="8" cy="8" r="3.2" fill="#fff"/></svg>';
+  const COLORS = ["#e0783a", "#3d8db5", "#c2577f", "#4d9a68", "#8a6bbf", "#b8862f"];
+  const colorOf = {};
+  const avatarColor = (name) => colorOf[name] || (colorOf[name] = COLORS[Object.keys(colorOf).length % COLORS.length]);
+  const letterOpt = (s) => { const m = String(s).match(/^([A-Z])\s+(.*)$/); return m ? `<b>${m[1]}</b>${esc(m[2])}` : esc(s); };
+  const banner = (tab, tag) => `<div class="banner"><span class="tab">${esc(tab)}</span><span class="tag">${esc(tag)}</span></div>`;
+
+  function slot(uid, inner) { return `<span class="slot" data-slot="${uid}">${inner}</span>`; }
+  function optionList(bank) {
+    return '<option value="">选…</option>' + bank.map((b) => `<option value="${esc(b[0])}">${esc(b)}</option>`).join("");
+  }
+  function withBlanks(text, uids, makeBlank) {
+    const parts = text.split("___");
+    let html = esc(parts[0]);
+    for (let i = 1; i < parts.length; i++) html += slot(uids[i - 1], makeBlank(uids[i - 1])) + esc(parts[i]);
+    return html;
+  }
+
+  function heroHtml(b) {
+    const m = lesson.title.match(/^第(\d+)课\s*(.*)$/) || [null, "", lesson.title];
+    return `<div class="lesson-hero"><div class="num"><small>Bài</small><b>${esc(m[1])}</b></div>
+        <div class="ttl"><h1>${esc(m[2])}</h1><div>${esc((lesson.vi || "").replace(/^Bài\s*\d+\s*·\s*/, ""))}</div></div></div>
+      <div class="goals"><h3>目标 <span class="vi">Mục tiêu</span></h3><ul style="margin:0;padding:0">${b.goals.map((g) =>
+        `<li>${esc(g[0])}<div class="vi">${esc(g[1])}</div></li>`).join("")}</ul></div>`;
+  }
+
+  function exerciseHtml(sec) {
+    const head = `<div class="ex-head"><span>${esc(sec.title)}</span><span class="vi">${esc(sec.vi || "")}</span></div>
+      ${sec.note ? `<p class="note" style="margin-left:20px">${esc(sec.note)}</p>` : ""}
+      ${sec.audio ? `<audio controls preload="none" src="${esc(sec.audio)}"></audio>` : ""}
+      ${sec.bank ? `<div class="bank">${sec.bank.map((b) => `<span>${letterOpt(b)}</span>`).join("")}</div>` : ""}`;
+    let body;
+    if (sec.type === "select" && sec.items[0].img) {
+      body = '<div class="imggrid">' + sec.items.map((it, i) => {
+        const u = it.units[0];
+        return `<div class="imgq" data-slot="${u}"><img src="${it.img}" alt="第${i + 1}张图">
+          <span class="qnum">(${i + 1})</span><select class="blank" data-unit="${u}" aria-label="第${i + 1}张图">${optionList(sec.bank)}</select></div>`;
+      }).join("") + "</div>";
+    } else {
+      body = sec.items.map((it, i) => {
+        const num = `<span class="qnum">(${i + 1})</span>`;
+        if (sec.type === "select") {
+          return `<div class="q"><div class="qtext">${num}${withBlanks(it.text, it.units,
+            (u) => `<select class="blank" data-unit="${u}" aria-label="第${i + 1}题">${optionList(sec.bank)}</select>`)}</div></div>`;
+        }
+        if (sec.type === "choice") {
+          const u = it.units[0];
+          return `<div class="q" data-slot="${u}"><div class="qtext">${num}${esc(it.text)}</div>
+            <div class="opts" role="radiogroup">${it.options.map((o) =>
+              `<label class="opt"><input type="radio" name="${u}" value="${esc(o[0])}" data-unit="${u}"><span>${letterOpt(o)}</span></label>`).join("")}</div></div>`;
+        }
+        if (sec.type === "fill") {
+          const txt = `<div class="qtext">${num}${withBlanks(it.text, it.units,
+            (u) => `<input class="blank" data-unit="${u}" autocomplete="off" aria-label="填空">`)}</div>`;
+          return `<div class="q">${it.img ? `<div class="qrow"><img src="${it.img}" alt="">${txt}</div>` : txt}</div>`;
+        }
+        const u = it.units[0];
+        return `<div class="q" data-slot="${u}"><div class="qtext">${num}${esc(it.text)}</div>
+          <textarea data-unit="${u}" placeholder="用中文回答 · Trả lời bằng tiếng Trung"></textarea></div>`;
+      }).join("");
+    }
+    return `<section class="ex">${head}${body}</section>`;
+  }
+
+  function kewenBodyHtml(b, headBlk) {
+    const page = headBlk ? headBlk.page : "";
+    let left;
+    if (b.lines && b.lines.length) {
+      left = headBlk && headBlk.prose
+        ? `<div class="prose">${b.lines.map((l) => `<p>${esc(l.who ? l.who + "：" + l.text : l.text)}</p>`).join("")}</div>`
+        : `<div class="dialog">${b.lines.map((l) => l.who
+            ? `<div class="line"><div class="ava"><i style="background:${avatarColor(l.who)}">${esc(l.who.slice(-1))}</i>${esc(l.who)}</div><div class="bubble">${esc(l.text)}</div></div>`
+            : `<div class="prose"><p>${esc(l.text)}</p></div>`).join("")}</div>`;
+    } else {
+      left = `<div class="placeholder"><b>📖 课文请看课本第 ${esc(page)} 页</b>先读课文，再做下面的题。<div class="vi">Hãy đọc bài khoá ở sách trang ${esc(page)}, sau đó làm bài.</div></div>`;
+    }
+    const vocab = b.vocab && b.vocab.length ? `<div class="vocab"><div class="vt">生词 <span>Từ mới</span></div>${b.vocab.map((v) =>
+      `<div class="vrow"><span class="vn">${v.n}</span><span class="vw">${esc(v.word)}</span><span class="vp">${esc(v.py)}</span><span class="vpos">${esc(v.pos)}</span><span class="vv">${esc(v.vi)}</span></div>`).join("")}</div>` : "";
+    return `<div class="kewen"><div>${left}</div><div>${b.photo ? `<img class="photo" src="${b.photo}" alt="课文${b.n}照片">` : ""}${vocab}</div></div>`;
+  }
+
+  function render() {
+    const heads = {};
+    lesson.blocks.forEach((b) => { if (b.kind === "kewen-head") heads[b.n] = b; });
+    let hero = "", html = "";
+    lesson.blocks.forEach((b) => {
+      if (b.kind === "intro") hero += heroHtml(b);
+      else if (b.kind === "banner") html += banner(b.title, b.vi);
+      else if (b.kind === "kewen-head") {
+        html += banner("课文 " + b.n, "Bài khoá " + b.n) + `<div class="scene">${PIN}<div><span class="cn" style="font-size:18px">地点：${esc(b.place)}　人物：${esc(b.people.join("、"))}</span><div class="vi">${esc(b.placeVi || "")}</div></div><span class="page">课本第 ${esc(b.page)} 页</span></div>`;
+      }
+      else if (b.kind === "kewen-body") html += kewenBodyHtml(b, heads[b.n]);
+      else if (b.kind === "grammar") {
+        html += banner("小语讲堂", "Lớp học của Tiểu Ngữ") + `<div class="gram"><h3><span class="gn">${b.n}</span><span class="cn">${esc(b.title)}</span></h3>
+          <p>${esc(b.explain)}</p><p class="vi">${esc(b.explainVi)}</p><p class="muted" style="margin-bottom:0">例如 · Ví dụ：</p>
+          <ol>${b.examples.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></div>`;
+      }
+      else if (b.kind === "note") html += `<div class="card"><div class="cn" style="font-size:18px">${esc(b.text)}</div><div class="vi" style="margin-top:6px">${esc(b.vi || "")}</div></div>`;
+      else if (b.kind === "exercise") html += exerciseHtml(b);
+    });
+    $("hero").innerHTML = hero;
+    $("paper").innerHTML = html;
+    $("paper").addEventListener("input", onInput);
+    $("paper").addEventListener("change", onInput);
+  }
+
+  function buildName(current) {
+    const box = $("namebox");
+    if (C.STUDENTS && C.STUDENTS.length) {
+      box.innerHTML = `<select id="name"><option value="">— 请选择 · Chọn tên —</option>${C.STUDENTS.map((s) =>
+        `<option${s === current ? " selected" : ""}>${esc(s)}</option>`).join("")}</select>`;
+    } else {
+      box.innerHTML = `<input id="name" autocomplete="name" placeholder="例如：Nguyễn Văn An" value="${esc(current)}">`;
+    }
+    $("name").addEventListener("input", onInput);
+    $("name").addEventListener("change", onInput);
+  }
+
+  // ---------- 读写答案 ----------
+  function collect() {
+    const a = {};
+    for (const u of units) {
+      const els = document.querySelectorAll(`[data-unit="${u.id}"]`);
+      if (!els.length) continue;
+      if (els[0].type === "radio") {
+        const c = [...els].find((e) => e.checked);
+        a[u.id] = c ? c.value : "";
+      } else a[u.id] = els[0].value.trim();
+    }
+    return a;
+  }
+  function fill(ans) {
+    for (const [uid, v] of Object.entries(ans || {})) {
+      document.querySelectorAll(`[data-unit="${uid}"]`).forEach((el) => {
+        if (el.type === "radio") el.checked = el.value === v; else el.value = v;
+      });
+    }
+  }
+  let saveTimer;
+  function onInput() {
+    updateProgress();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const name = $("name") ? $("name").value.trim() : "";
+      store("hw_draft_" + lesson.id, { student: name, answers: collect() });
+    }, 400);
+  }
+  function updateProgress() {
+    const a = collect();
+    const filled = units.filter((u) => a[u.id]).length;
+    $("pcount").textContent = `已完成 ${filled} / ${units.length}`;
+    $("pbar").style.width = (100 * filled / units.length) + "%";
+    const name = $("name") ? $("name").value.trim() : "";
+    $("who").textContent = name || "还没填名字";
+  }
+
+  // ---------- 交作业 ----------
+  $("submit").addEventListener("click", async () => {
+    const name = $("name").value.trim();
+    if (!name) {
+      toast("请先填写你的名字 · Hãy nhập tên của bạn");
+      $("namecard").scrollIntoView({ behavior: "smooth" });
+      $("name").focus();
+      return;
+    }
+    const answers = collect();
+    const empty = units.filter((u) => !answers[u.id]).length;
+    if (empty && !confirm(`还有 ${empty} 个空没有写，确定交作业吗？\nCòn ${empty} chỗ trống chưa làm. Bạn chắc chắn nộp bài?`)) return;
+    if (!empty && !confirm("交了以后不能再改。确定交作业吗？\nNộp rồi sẽ không sửa được. Bạn chắc chắn nộp bài?")) return;
+    const btn = $("submit");
+    btn.disabled = true; btn.textContent = "正在提交…";
+    const g = gradeAll(lesson, key, answers);
+    try {
+      const r = await call({ action: "submit", lesson: lesson.id, student: name, answers, auto: g.count });
+      if (!r || !r.ok) throw new Error((r && r.error) || "提交失败");
+      done = { student: name, answers, time: new Date().toISOString() };
+      store("hw_done_" + lesson.id, done);
+      store("hw_draft_" + lesson.id, null);
+      showResult(done);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      toast("没有提交成功，请检查网络后再试一次。" + e.message);
+      btn.disabled = false; btn.textContent = "交作业 · Nộp bài";
+    }
+  });
+
+  function showResult(d) {
+    const g = gradeAll(lesson, key, d.answers);
+    const { right, wrong, pending } = g.count;
+    $("namecard").classList.add("hidden");
+    $("submitbox").classList.add("hidden");
+    $("progress").classList.add("hidden");
+    document.querySelectorAll("[data-unit]").forEach((el) => (el.disabled = true));
+    const auto = right + wrong;
+    $("result").innerHTML = `
+      <div class="muted">${esc(d.student)} · 已交作业 · Đã nộp bài</div>
+      <div class="score">${right} / ${auto}</div>
+      <div class="muted">自动批改的题目答对 ${right} 个 · Đúng ${right}/${auto} câu chấm tự động</div>
+      <div class="stats">
+        <div style="background:var(--right-soft);color:var(--right)">✓ 对 ${right}</div>
+        <div style="background:var(--wrong-soft);color:var(--wrong)">✗ 错 ${wrong}</div>
+        ${pending ? `<div style="background:var(--pend-soft);color:var(--pend)">… 等老师批改 ${pending}</div>` : ""}
+      </div>
+      <p class="note">下面每题都标出了对错。老师会根据你的错题讲解。<br><span class="vi">Mỗi câu bên dưới đã được đánh dấu đúng/sai. Giáo viên sẽ giảng lại những câu bạn làm sai.</span></p>`;
+    $("result").classList.remove("hidden");
+    for (const u of units) {
+      const r = g.res[u.id];
+      const host = document.querySelector(`[data-slot="${u.id}"]`);
+      if (!host) continue;
+      host.classList.add("is-" + r.status);
+      const label = { right: "✓ 对", wrong: "✗ 错", pending: "待批改" }[r.status];
+      let extra = "";
+      if (r.status === "wrong" && r.reason) extra += ` <span class="mark wrong">${esc(r.reason)}</span>`;
+      host.insertAdjacentHTML("beforeend", ` <span class="mark ${r.status}">${label}</span>${extra}`);
+      if (C.SHOW_ANSWERS && r.status !== "right") {
+        const t = answerText(key[u.id]);
+        if (t) host.insertAdjacentHTML("beforeend", `<div class="fix">答案：${esc(t)}</div>`);
+      }
+    }
+  }
+
+  function toast(text) {
+    const t = document.createElement("div");
+    t.className = "toast"; t.textContent = text;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3500);
+  }
+})();
+</script>
+</body>
+</html>
